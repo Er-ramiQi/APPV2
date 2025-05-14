@@ -1,0 +1,57 @@
+name: monpass
+description: Une application moderne de gestion de mots de passe
+
+# La version suit le modèle semver (major.minor.patch)
+version: 1.0.0+1
+
+environment:
+  sdk: '>=2.19.0 <3.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  
+  # Stockage et sécurité
+  shared_preferences: ^2.1.0
+  flutter_secure_storage: ^8.0.0  # Stockage sécurisé des données sensibles
+  encrypt: ^5.0.1                 # Chiffrement AES
+  local_auth: ^2.1.6              # Authentification biométrique
+  
+  # Réseaux et API
+  http: ^0.13.6                   # Requêtes HTTP
+  connectivity_plus: ^4.0.1       # Vérification de la connectivité
+  ssl_pinning_plugin: ^2.0.0      # Certificate pinning
+  
+  # Sécurité supplémentaire
+  root_check: ^0.0.2+1            # Détection des appareils rootés/jailbreakés
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+  flutter_launcher_icons: ^0.13.1  # Pour générer facilement les icônes de l'application
+
+# Configuration pour flutter_launcher_icons
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/logo.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#87CEEB"
+  adaptive_icon_foreground: "assets/images/logo.png"
+
+flutter:
+  uses-material-design: true
+
+  # Déclaration des assets de l'application
+  assets:
+    - assets/images/logo.png
+
+  # Polices personnalisées si nécessaire
+  # fonts:
+  #   - family: Roboto
+  #     fonts:
+  #       - asset: fonts/Roboto-Regular.ttf
+  #       - asset: fonts/Roboto-Bold.ttf
+  #         weight: 700
