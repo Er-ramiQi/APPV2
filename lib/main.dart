@@ -1,5 +1,6 @@
 // main.dart
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'config/themes.dart';
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
@@ -9,30 +10,41 @@ import 'screens/settings_screen.dart';
 import 'screens/password_generator_screen.dart';
 import 'services/auth_service.dart';
 import 'services/sync_service.dart';
+import 'services/security_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Vérifier la sécurité de l'appareil
+  // Bloquer l'orientation en portrait uniquement pour Android
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  
+  // Initialiser les services
+  final securityService = SecurityService();
+  await securityService.initialize();
+  
   final authService = AuthService();
+  
+  // Vérifier la sécurité de l'appareil
   final isDeviceSecure = await authService.isDeviceSecure();
   
-  // Vérifier si un débogueur est attaché (en mode production seulement)
-  final isDebuggerAttached = authService.isDebuggerAttached();
+  // Vérifier si un débogueur est attaché
+  final isDebuggerAttached = securityService.isDebuggerAttached();
   
-  // Si on est en production et que le débogueur est attaché, on considère que c'est une tentative de hack
+  // Si on est en production et que l'appareil n'est pas sécurisé
   if (!isDebuggerAttached && !isDeviceSecure) {
-    // Option 1: Limiter les fonctionnalités
-    // Option 2: Afficher un avertissement
-    print('Appareil non sécurisé détecté (rooté ou jailbreaké)');
+    // Dans une app réelle, vous pourriez vouloir :
+    // 1. Limiter l'accès aux données sensibles
+    // 2. Forcer une authentification supplémentaire
+    // 3. Présenter un avertissement à l'utilisateur
+    print('Appareil non sécurisé détecté (rooté)');
   }
   
   // Initialiser le service de synchronisation
   final syncService = SyncService();
-  syncService.initialize();
-  
-  // Configurer une synchronisation périodique (toutes les 15 minutes)
-  syncService.setupPeriodicSync();
+  await syncService.initialize();
   
   runApp(const PasswordManagerApp());
 }
@@ -54,6 +66,14 @@ class PasswordManagerApp extends StatelessWidget {
         '/password-generator': (context) => const PasswordGeneratorScreen(),
       },
       debugShowCheckedModeBanner: false,
+      // Configurer des gestionnaires d'erreur pour capturer les erreurs
+      builder: (context, child) {
+        return MediaQuery(
+          // Fixer la taille du texte pour éviter les problèmes de sécurité
+          data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+          child: child!,
+        );
+      },
     );
   }
 }

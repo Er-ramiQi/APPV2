@@ -1,11 +1,14 @@
-// screens/login_screen.dart
+// lib/screens/login_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_form_builder/flutter_form_builder.dart';
 import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:pin_code_fields/pin_code_fields.dart';
+import 'package:local_auth/local_auth.dart';
 import '../services/auth_service.dart';
+import '../services/security_service.dart';
 import '../config/themes.dart';
 import 'home_screen.dart';
+import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -19,19 +22,84 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
+  final _securityService = SecurityService();
+  final LocalAuthentication _localAuth = LocalAuthentication();
   
   bool _isLoading = false;
   bool _showOtpScreen = false;
   String? _errorMessage;
+  bool _passwordVisible = false;
   
   // Pour suivre l'utilisateur courant en attente de validation OTP
   String _pendingEmail = '';
+  
+  // Pour afficher un message d'erreur sur l'écran OTP
+  String? _otpErrorMessage;
+  
+  // Pour suivre le nombre de tentatives OTP
+  int _otpAttempts = 0;
+  
+  // Pour identifier les appareils à risque
+  bool _isSecurityRisk = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDeviceSecurity();
+    _checkBiometric();
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+  
+  // Vérifier la sécurité de l'appareil
+  Future<void> _checkDeviceSecurity() async {
+    final isDeviceSecure = await _authService.isDeviceSecure();
+    final isDebuggerAttached = _authService.isDebuggerAttached();
+    
+    if (!isDeviceSecure || isDebuggerAttached) {
+      setState(() {
+        _isSecurityRisk = true;
+      });
+    }
+  }
+  
+  // Vérifier si l'authentification biométrique est disponible
+  Future<void> _checkBiometric() async {
+    try {
+      final canCheckBiometrics = await _localAuth.canCheckBiometrics;
+      final isDeviceSupported = await _localAuth.isDeviceSupported();
+      
+      if (canCheckBiometrics && isDeviceSupported) {
+        // Tenter l'authentification biométrique automatiquement
+        final isBiometricEnabled = await _authService.isBiometricAvailable();
+        
+        if (isBiometricEnabled) {
+          final authenticated = await _localAuth.authenticate(
+            localizedReason: 'Authentifiez-vous pour accéder à l\'application',
+            options: const AuthenticationOptions(
+              stickyAuth: true,
+              biometricOnly: true,
+            ),
+          );
+          
+          if (authenticated) {
+            // Rediriger vers l'écran d'accueil
+            if (mounted) {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (context) => const HomeScreen()),
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Ignorer les erreurs biométriques
+    }
   }
 
   // Soumettre le formulaire de connexion
@@ -55,6 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
             _isLoading = false;
             _showOtpScreen = true;
             _pendingEmail = email;
+            _otpAttempts = 0;
           });
         } else {
           setState(() {
@@ -75,10 +144,13 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _verifyOtp(String otp) async {
     setState(() {
       _isLoading = true;
-      _errorMessage = null;
+      _otpErrorMessage = null;
     });
 
     try {
+      // Compter les tentatives
+      _otpAttempts++;
+      
       // Appel au service pour vérifier l'OTP
       final result = await _authService.verifyOtp(_pendingEmail, otp);
       
@@ -90,13 +162,19 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'Code OTP invalide. Veuillez réessayer.';
+          _otpErrorMessage = 'Code OTP invalide. Veuillez réessayer.';
+          
+          // Après 3 tentatives, revenir à la page de connexion
+          if (_otpAttempts >= 3) {
+            _showOtpScreen = false;
+            _errorMessage = 'Trop de tentatives échouées. Veuillez recommencer.';
+          }
         });
       }
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _errorMessage = 'Une erreur est survenue: ${e.toString()}';
+        _otpErrorMessage = 'Une erreur est survenue: ${e.toString()}';
       });
     }
   }
@@ -118,7 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 60),
+          const SizedBox(height: 40),
           // Logo et titre
           Center(
             child: Column(
@@ -147,7 +225,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Connectez-vous pour accéder à vos mots de passe',
+                  'Connexion sécurisée à deux facteurs',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 16,
@@ -157,6 +235,45 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
+          
+          // Avertissement si l'appareil présente un risque de sécurité
+          if (_isSecurityRisk)
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 16),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          'Attention - Appareil non sécurisé',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.deepOrange,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Votre appareil présente des risques de sécurité. '
+                          'Certaines fonctionnalités peuvent être limitées.',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          
           const SizedBox(height: 40),
           
           // Formulaire
@@ -169,11 +286,21 @@ class _LoginScreenState extends State<LoginScreen> {
                 FormBuilderTextField(
                   name: 'email',
                   controller: _emailController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Email',
                     hintText: 'Entrez votre adresse email',
-                    prefixIcon: Icon(Icons.email_outlined),
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.email_outlined),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppThemes.primaryColor),
+                    ),
                   ),
                   keyboardType: TextInputType.emailAddress,
                   validator: FormBuilderValidators.compose([
@@ -187,13 +314,34 @@ class _LoginScreenState extends State<LoginScreen> {
                 FormBuilderTextField(
                   name: 'password',
                   controller: _passwordController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Mot de passe',
                     hintText: 'Entrez votre mot de passe',
-                    prefixIcon: Icon(Icons.lock_outline),
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _passwordVisible ? Icons.visibility_off : Icons.visibility,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _passwordVisible = !_passwordVisible;
+                        });
+                      },
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppThemes.primaryColor),
+                    ),
                   ),
-                  obscureText: true,
+                  obscureText: !_passwordVisible,
                   validator: FormBuilderValidators.compose([
                     FormBuilderValidators.required(errorText: 'Veuillez entrer votre mot de passe'),
                     FormBuilderValidators.minLength(6, errorText: 'Le mot de passe doit contenir au moins 6 caractères'),
@@ -208,6 +356,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: () {
                       // Navigation vers la récupération de mot de passe
                     },
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppThemes.secondaryColor,
+                    ),
                     child: const Text('Mot de passe oublié ?'),
                   ),
                 ),
@@ -217,8 +368,14 @@ class _LoginScreenState extends State<LoginScreen> {
           
           // Message d'erreur
           if (_errorMessage != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              margin: const EdgeInsets.only(top: 8, bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.shade200),
+              ),
               child: Text(
                 _errorMessage!,
                 style: const TextStyle(color: Colors.red),
@@ -234,8 +391,9 @@ class _LoginScreenState extends State<LoginScreen> {
               backgroundColor: AppThemes.primaryColor,
               padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(10),
               ),
+              elevation: 2,
             ),
             child: _isLoading
                 ? const SizedBox(
@@ -260,11 +418,50 @@ class _LoginScreenState extends State<LoginScreen> {
               const Text('Vous n\'avez pas de compte ?'),
               TextButton(
                 onPressed: () {
-                  // Navigation vers l'inscription
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                  );
                 },
+                style: TextButton.styleFrom(
+                  foregroundColor: AppThemes.secondaryColor,
+                ),
                 child: const Text('S\'inscrire'),
               ),
             ],
+          ),
+          
+          // Explication de la sécurité à deux facteurs
+          const SizedBox(height: 48),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.blue.shade100),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.security, color: AppThemes.secondaryColor),
+                    SizedBox(width: 8),
+                    Text(
+                      'Authentification à deux facteurs',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppThemes.secondaryColor,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Pour protéger vos données sensibles, nous utilisons une authentification à deux facteurs. Après avoir saisi vos identifiants, vous recevrez un code unique par email pour confirmer votre identité.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -276,9 +473,20 @@ class _LoginScreenState extends State<LoginScreen> {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 60),
+          // Bouton de retour
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              setState(() {
+                _showOtpScreen = false;
+                _otpErrorMessage = null;
+              });
+            },
+          ),
+          const SizedBox(height: 40),
+          
           // Icône et titre
           Center(
             child: Column(
@@ -328,15 +536,18 @@ class _LoginScreenState extends State<LoginScreen> {
               onChanged: (value) {},
               onCompleted: (otp) {
                 // Vérifier l'OTP dès qu'il est complètement saisi
-                _verifyOtp(otp);
+                if (!_isLoading) {
+                  _verifyOtp(otp);
+                }
               },
+              autoFocus: true,
               pinTheme: PinTheme(
                 shape: PinCodeFieldShape.box,
                 borderRadius: BorderRadius.circular(8),
                 fieldHeight: 50,
                 fieldWidth: 40,
                 activeFillColor: Colors.white,
-                inactiveFillColor: Colors.white,
+                inactiveFillColor: Colors.grey.shade100,
                 selectedFillColor: Colors.white,
                 activeColor: AppThemes.primaryColor,
                 inactiveColor: Colors.grey.shade300,
@@ -348,14 +559,22 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
           
-          // Message d'erreur
-          if (_errorMessage != null)
+          // Message d'erreur OTP
+          if (_otpErrorMessage != null)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.red),
-                textAlign: TextAlign.center,
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Text(
+                  _otpErrorMessage!,
+                  style: const TextStyle(color: Colors.red),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ),
           
@@ -369,39 +588,97 @@ class _LoginScreenState extends State<LoginScreen> {
             Column(
               children: [
                 // Renvoyer le code
-                TextButton.icon(
-                  onPressed: () async {
-                    // Réinitialiser l'envoi d'OTP
-                    try {
-                      await _authService.resendOtp(_pendingEmail);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Un nouveau code a été envoyé'),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, color: Colors.grey),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Vous n\'avez pas reçu le code?',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Vérifiez votre dossier de spam ou demandez un nouveau code.',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ],
                         ),
-                      );
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Renvoyer le code
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Envoyer un nouveau code'),
+                  onPressed: () async {
+                    try {
+                      setState(() {
+                        _isLoading = true;
+                      });
+                      
+                      await _authService.resendOtp(_pendingEmail);
+                      
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Un nouveau code a été envoyé'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
                     } catch (e) {
                       setState(() {
-                        _errorMessage = 'Erreur lors de l\'envoi: ${e.toString()}';
+                        _otpErrorMessage = 'Erreur lors de l\'envoi: ${e.toString()}';
                       });
+                    } finally {
+                      if (mounted) {
+                        setState(() {
+                          _isLoading = false;
+                        });
+                      }
                     }
                   },
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Renvoyer le code'),
-                ),
-                
-                // Retour à la connexion
-                TextButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _showOtpScreen = false;
-                      _errorMessage = null;
-                    });
-                  },
-                  icon: const Icon(Icons.arrow_back),
-                  label: const Text('Retour à la connexion'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppThemes.secondaryColor,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      side: BorderSide(color: AppThemes.secondaryColor),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  ),
                 ),
               ],
             ),
+          
+          // Note de sécurité
+          const SizedBox(height: 40),
+          const Center(
+            child: Column(
+              children: [
+                Icon(Icons.lock, color: Colors.grey),
+                SizedBox(height: 8),
+                Text(
+                  'Ce code expire après 10 minutes',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

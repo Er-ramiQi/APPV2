@@ -1,10 +1,14 @@
-// services/auth_service.dart
+// lib/services/auth_service.dart
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:math';
+import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:local_auth/error_codes.dart' as auth_error;
-import 'package:flutter/services.dart';
+import 'package:root_check/root_check.dart';
+import 'package:flutter/foundation.dart';
+import 'api_service.dart';
+import 'secure_storage_service.dart';
 
 class AuthService {
   // Singleton
@@ -12,79 +16,204 @@ class AuthService {
   factory AuthService() => _instance;
   AuthService._internal();
 
-  // Configuration
-  final String _baseUrl = 'https://your-api-domain.com/api';
-  final _secureStorage = const FlutterSecureStorage();
+  final ApiService _apiService = ApiService();
+  final SecureStorageService _secureStorage = SecureStorageService();
   final LocalAuthentication _localAuth = LocalAuthentication();
 
-  // Clés pour le stockage sécurisé
-  static const String _tokenKey = 'auth_token';
-  static const String _refreshTokenKey = 'refresh_token';
-  static const String _userInfoKey = 'user_info';
-  static const String _biometricEnabledKey = 'biometric_enabled';
+  // Nombres de tentatives échouées pour le verrouillage
+  static const int _maxLoginAttempts = 5;
+  static const int _lockDurationMinutes = 15;
 
-  // En-têtes HTTP
-  Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
+  // Vérifier la sécurité de l'appareil (racine, émulateur, etc.)
+  Future<bool> isDeviceSecure() async {
+    try {
+      bool isRooted = await RootCheck.isRooted ?? false;
+      bool isDevMode = await _isInDeveloperMode();
+      
+      // Enregistrer l'état pour référence
+      await _secureStorage.saveSecuritySetting('device_rooted', isRooted.toString());
+      await _secureStorage.saveSecuritySetting('device_developer_mode', isDevMode.toString());
+      
+      // Un appareil rooté compromet gravement la sécurité
+      if (isRooted) {
+        return false;
+      }
+      
+      // Le mode développeur est un risque mais moins grave
+      return !isRooted;
+    } catch (e) {
+      // Par défaut, considérer l'appareil comme non sécurisé en cas d'erreur
+      print('Erreur lors de la vérification de la sécurité: $e');
+      return false;
+    }
+  }
+
+  // Vérifier si le mode développeur est activé
+  Future<bool> _isInDeveloperMode() async {
+    // Cette méthode est simplifiée
+    // Pour une implémentation réelle, utilisez une méthode de détection plus robuste
+    return false; // Placeholder
+  }
+
+  // Vérifier si un débogueur est attaché
+  bool isDebuggerAttached() {
+    // En mode debug pendant le développement, toujours renvoyer false
+    if (kDebugMode) return false;
+    
+    // En production, cette méthode devrait détecter si un débogueur est attaché
+    // Cette implémentation est simplifiée
+    return false; // Placeholder
+  }
+
+  // Méthode pour vérifier si l'application est en cours d'exécution sur un émulateur
+  Future<bool> isRunningOnEmulator() async {
+    // Cette méthode est simplifiée
+    // Pour une implémentation réelle, utilisez une méthode de détection d'émulateur
+    return false; // Placeholder
+  }
 
   // Première étape de connexion : envoi email/mot de passe pour obtenir OTP
   Future<bool> initiateLogin(String email, String password) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/login'),
-        headers: _headers,
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        // Connexion réussie, OTP envoyé
-        return true;
-      } else if (response.statusCode == 401) {
-        // Identifiants incorrects
-        return false;
+      // Vérifier si le compte est verrouillé
+      if (await _isAccountLocked()) {
+        throw Exception('Compte temporairement verrouillé suite à plusieurs tentatives échouées');
+      }
+      
+      // Vérifier si nous sommes en mode hors ligne
+      final bool isOnline = await _apiService.isNetworkAvailable();
+      
+      if (isOnline) {
+        // Mode en ligne: demander un OTP
+        final response = await _apiService.requestOtp(email);
+        
+        if (response['success'] == true) {
+          // Stocker l'email pour la prochaine étape
+          await _secureStorage.saveSecuritySetting('pending_auth_email', email);
+          
+          // Enregistrer le hash du mot de passe pour validation locale
+          final passwordHash = _hashPassword(password);
+          await _secureStorage.saveSecuritySetting('pending_auth_password_hash', passwordHash);
+          
+          // Réinitialiser le compteur de tentatives
+          await _resetFailedAttempts();
+          
+          return true;
+        } else {
+          // Incrémenter le compteur de tentatives échouées
+          await _incrementFailedAttempts();
+          return false;
+        }
       } else {
-        // Autres erreurs
-        final data = jsonDecode(response.body);
-        throw Exception(data['message'] ?? 'Une erreur s\'est produite');
+        // Mode hors ligne: vérifier les identifiants localement
+        final User? user = await _secureStorage.getUser();
+        final String? storedPasswordHash = await _secureStorage.getMasterPasswordHash();
+        
+        if (user != null && user.email == email && storedPasswordHash != null) {
+          // Vérifier le mot de passe
+          final passwordHash = _hashPassword(password);
+          
+          if (storedPasswordHash == passwordHash) {
+            // Réinitialiser le compteur de tentatives
+            await _resetFailedAttempts();
+            return true;
+          }
+        }
+        
+        // Incrémenter le compteur de tentatives échouées
+        await _incrementFailedAttempts();
+        return false;
       }
     } catch (e) {
       throw Exception('Erreur de connexion: $e');
     }
   }
 
+  // Hacher le mot de passe pour stockage ou comparaison sécurisée
+  String _hashPassword(String password) {
+    final bytes = utf8.encode(password);
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  // Incrémenter le compteur de tentatives échouées
+  Future<void> _incrementFailedAttempts() async {
+    String? attemptsStr = await _secureStorage.getSecuritySetting('failed_login_attempts');
+    int attempts = attemptsStr != null ? int.parse(attemptsStr) : 0;
+    attempts++;
+    
+    await _secureStorage.saveSecuritySetting('failed_login_attempts', attempts.toString());
+    
+    // Si le nombre maximum de tentatives est atteint, verrouiller le compte
+    if (attempts >= _maxLoginAttempts) {
+      final lockUntil = DateTime.now().add(const Duration(minutes: _lockDurationMinutes));
+      await _secureStorage.saveSecuritySetting('account_locked_until', lockUntil.toIso8601String());
+    }
+  }
+
+  // Réinitialiser le compteur de tentatives échouées
+  Future<void> _resetFailedAttempts() async {
+    await _secureStorage.saveSecuritySetting('failed_login_attempts', '0');
+    await _secureStorage.saveSecuritySetting('account_locked_until', '');
+  }
+
+  // Vérifier si le compte est verrouillé
+  Future<bool> _isAccountLocked() async {
+    String? lockedUntilStr = await _secureStorage.getSecuritySetting('account_locked_until');
+    
+    if (lockedUntilStr != null && lockedUntilStr.isNotEmpty) {
+      DateTime lockedUntil = DateTime.parse(lockedUntilStr);
+      
+      if (DateTime.now().isBefore(lockedUntil)) {
+        return true;
+      } else {
+        // La période de verrouillage est terminée
+        await _resetFailedAttempts();
+        return false;
+      }
+    }
+    
+    return false;
+  }
+
   // Deuxième étape : vérification du code OTP
   Future<bool> verifyOtp(String email, String otp) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/verify-otp'),
-        headers: _headers,
-        body: jsonEncode({
-          'email': email,
-          'otp': otp,
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        // OTP valide, récupérer le token et infos utilisateur
-        final data = jsonDecode(response.body);
-        final token = data['token'];
-        final refreshToken = data['refresh_token'];
-        final userInfo = data['user'];
-
-        // Stocker le token de manière sécurisée
-        await _secureStorage.write(key: _tokenKey, value: token);
-        await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
-        await _secureStorage.write(
-            key: _userInfoKey, value: jsonEncode(userInfo));
-
+      // Vérifier si l'email correspond à celui en attente
+      String? pendingEmail = await _secureStorage.getSecuritySetting('pending_auth_email');
+      
+      if (pendingEmail != email) {
+        throw Exception('Session expirée ou invalide');
+      }
+      
+      final response = await _apiService.verifyOtp(email, otp);
+      
+      if (response['success'] == true) {
+        // Authentification réussie
+        final String? token = response['token'];
+        final Map<String, dynamic>? userData = response['user'];
+        
+        if (token != null) {
+          await _secureStorage.saveAuthToken(token);
+        }
+        
+        if (userData != null) {
+          final user = User.fromJson(userData);
+          await _secureStorage.saveUser(user);
+          
+          // Sauvegarder le hash du mot de passe maître pour les vérifications hors ligne
+          String? pendingPasswordHash = await _secureStorage.getSecuritySetting('pending_auth_password_hash');
+          if (pendingPasswordHash != null) {
+            await _secureStorage.saveMasterPasswordHash(pendingPasswordHash);
+          }
+        }
+        
+        // Nettoyer les informations de connexion en attente
+        await _secureStorage.saveSecuritySetting('pending_auth_email', '');
+        await _secureStorage.saveSecuritySetting('pending_auth_password_hash', '');
+        
         return true;
       } else {
-        // OTP invalide ou autre erreur
         return false;
       }
     } catch (e) {
@@ -95,15 +224,8 @@ class AuthService {
   // Renvoyer un nouveau code OTP
   Future<bool> resendOtp(String email) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/resend-otp'),
-        headers: _headers,
-        body: jsonEncode({
-          'email': email,
-        }),
-      );
-
-      return response.statusCode == 200;
+      final response = await _apiService.requestOtp(email);
+      return response['success'] == true;
     } catch (e) {
       throw Exception('Erreur lors du renvoi d\'OTP: $e');
     }
@@ -111,101 +233,64 @@ class AuthService {
 
   // Vérifier si l'utilisateur est connecté
   Future<bool> isLoggedIn() async {
-    final token = await _secureStorage.read(key: _tokenKey);
-    return token != null;
+    try {
+      final token = await _secureStorage.getAuthToken();
+      
+      if (token == null) {
+        return false;
+      }
+      
+      // Vérifier si le token a expiré
+      final isTokenValid = await _validateToken(token);
+      return isTokenValid;
+    } catch (e) {
+      return false;
+    }
   }
 
-  // Récupérer le token d'authentification
-  Future<String?> getAuthToken() async {
-    return await _secureStorage.read(key: _tokenKey);
-  }
-
-  // Récupérer les informations utilisateur
-  Future<Map<String, dynamic>?> getUserInfo() async {
-    final userInfoString = await _secureStorage.read(key: _userInfoKey);
-    if (userInfoString == null) return null;
-    return jsonDecode(userInfoString);
+  // Validation simplifiée du token
+  Future<bool> _validateToken(String token) async {
+    // Dans une implémentation réelle, vérifier la validité du JWT
+    // Cette méthode est simplifiée
+    
+    // Vérifier si nous sommes en ligne
+    final bool isOnline = await _apiService.isNetworkAvailable();
+    
+    if (isOnline) {
+      // Vérifier le token avec le serveur
+      try {
+        final response = await _apiService.get('/auth/validate-token');
+        return response.statusCode == 200;
+      } catch (e) {
+        return false;
+      }
+    } else {
+      // Mode hors ligne : considérer le token comme valide
+      return true;
+    }
   }
 
   // Déconnexion
   Future<void> logout() async {
     try {
-      // Appel au backend pour invalider le token (optionnel)
-      final token = await getAuthToken();
-      if (token != null) {
-        await http.post(
-          Uri.parse('$_baseUrl/auth/logout'),
-          headers: {
-            ..._headers,
-            'Authorization': 'Bearer $token',
-          },
-        );
-      }
-    } catch (e) {
-      // Ignorer les erreurs lors de la déconnexion
-      print('Erreur lors de la déconnexion: $e');
-    } finally {
-      // Supprimer les données locales
-      await _secureStorage.delete(key: _tokenKey);
-      await _secureStorage.delete(key: _refreshTokenKey);
-      await _secureStorage.delete(key: _userInfoKey);
-    }
-  }
-
-  // Vérifier et rafraîchir le token
-  Future<String?> refreshTokenIfNeeded() async {
-    final token = await _secureStorage.read(key: _tokenKey);
-    final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
-
-    if (token == null || refreshToken == null) {
-      return null;
-    }
-
-    try {
-      // Vérifier si le token est expiré (à implémenter avec jwt_decoder)
-      bool isExpired = _isTokenExpired(token);
-
-      if (isExpired) {
-        // Rafraîchir le token
-        final response = await http.post(
-          Uri.parse('$_baseUrl/auth/refresh-token'),
-          headers: _headers,
-          body: jsonEncode({
-            'refresh_token': refreshToken,
-          }),
-        );
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final newToken = data['token'];
-          final newRefreshToken = data['refresh_token'];
-
-          // Mettre à jour les tokens
-          await _secureStorage.write(key: _tokenKey, value: newToken);
-          await _secureStorage.write(
-              key: _refreshTokenKey, value: newRefreshToken);
-
-          return newToken;
-        } else {
-          // Échec du rafraîchissement, déconnexion
-          await logout();
-          return null;
+      // Appel au backend pour invalider le token (si en ligne)
+      final isOnline = await _apiService.isNetworkAvailable();
+      
+      if (isOnline) {
+        final token = await _secureStorage.getAuthToken();
+        if (token != null) {
+          try {
+            await _apiService.post('/auth/logout');
+          } catch (e) {
+            // Ignorer les erreurs lors de la déconnexion en ligne
+            print('Erreur lors de la déconnexion en ligne: $e');
+          }
         }
       }
-
-      return token;
-    } catch (e) {
-      print('Erreur lors du rafraîchissement du token: $e');
-      return token; // Renvoyer le token actuel en cas d'erreur
+    } finally {
+      // Supprimer les données de session locales
+      await _secureStorage.deleteAuthToken();
     }
-  }
-
-  // Méthode simplifiée pour vérifier si un token est expiré
-  // À remplacer par une vérification réelle du JWT
-  bool _isTokenExpired(String token) {
-    // Dans une implémentation réelle, utilisez un package comme jwt_decoder
-    // pour décoder le token et vérifier sa date d'expiration
-    return false;
   }
 
   // ===== Méthodes d'authentification biométrique =====
@@ -219,7 +304,7 @@ class AuthService {
           canCheckBiometrics || await _localAuth.isDeviceSupported();
 
       // Vérifier si la biométrie est activée pour cette application
-      final isEnabled = await isBiometricEnabled();
+      final isEnabled = await _secureStorage.isBiometricEnabled();
 
       return canAuthenticate && isEnabled;
     } catch (e) {
@@ -228,18 +313,25 @@ class AuthService {
     }
   }
 
-  // Vérifier si la biométrie est activée
-  Future<bool> isBiometricEnabled() async {
-    final value = await _secureStorage.read(key: _biometricEnabledKey);
-    return value == 'true';
-  }
-
   // Activer/désactiver l'authentification biométrique
   Future<void> setBiometricEnabled(bool enabled) async {
-    await _secureStorage.write(
-      key: _biometricEnabledKey,
-      value: enabled.toString(),
-    );
+    if (enabled) {
+      // Vérifier si l'appareil supporte la biométrie avant d'activer
+      final canAuthenticate = await _localAuth.canCheckBiometrics && 
+                               await _localAuth.isDeviceSupported();
+      
+      if (!canAuthenticate) {
+        throw Exception('L\'appareil ne supporte pas l\'authentification biométrique');
+      }
+      
+      // Vérifier si des empreintes sont enregistrées
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+      if (availableBiometrics.isEmpty) {
+        throw Exception('Aucune donnée biométrique enregistrée sur l\'appareil');
+      }
+    }
+    
+    await _secureStorage.setBiometricEnabled(enabled);
   }
 
   // Authentifier avec biométrie
@@ -247,10 +339,10 @@ class AuthService {
     try {
       return await _localAuth.authenticate(
         localizedReason:
-            'Veuillez vous authentifier pour accéder à l\'application',
+            'Veuillez vous authentifier pour accéder à vos mots de passe',
         options: const AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: false,
+          biometricOnly: true,  // Forcer l'utilisation de la biométrie uniquement
         ),
       );
     } on PlatformException catch (e) {
@@ -258,6 +350,8 @@ class AuthService {
           e.code == auth_error.notEnrolled ||
           e.code == auth_error.passcodeNotSet) {
         // Biométrie non disponible ou non configurée
+        // Désactiver automatiquement la biométrie pour éviter de futures erreurs
+        await _secureStorage.setBiometricEnabled(false);
         return false;
       }
       print('Erreur d\'authentification biométrique: $e');
@@ -273,26 +367,98 @@ class AuthService {
   // Inscription d'un nouvel utilisateur
   Future<bool> register(String name, String email, String password) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/register'),
-        headers: _headers,
-        body: jsonEncode({
+      // Vérifier la qualité du mot de passe
+      if (!_isPasswordStrong(password)) {
+        throw Exception('Le mot de passe n\'est pas assez fort. Il doit contenir au moins 8 caractères dont des majuscules, minuscules, chiffres et symboles.');
+      }
+
+      // Générer le hash du mot de passe
+      final passwordHash = _hashPassword(password);
+      
+      // Appel à l'API pour l'inscription
+      final response = await _apiService.post(
+        '/auth/register',
+        body: {
           'name': name,
           'email': email,
-          'password': password,
-        }),
+          'password': password,  // Le serveur devrait effectuer son propre hachage
+        },
       );
 
       if (response.statusCode == 201) {
-        // Inscription réussie, redirection vers la connexion
+        // Stocker le hash du mot de passe localement pour les futures connexions hors ligne
+        await _secureStorage.saveMasterPasswordHash(passwordHash);
         return true;
       } else {
-        // Erreur d'inscription
         final data = jsonDecode(response.body);
         throw Exception(data['message'] ?? 'Erreur lors de l\'inscription');
       }
     } catch (e) {
       throw Exception('Erreur d\'inscription: $e');
     }
+  }
+
+  // Vérifier si le mot de passe est suffisamment fort
+  bool _isPasswordStrong(String password) {
+    // Au moins 8 caractères
+    if (password.length < 8) return false;
+    
+    // Au moins une majuscule
+    if (!password.contains(RegExp(r'[A-Z]'))) return false;
+    
+    // Au moins une minuscule
+    if (!password.contains(RegExp(r'[a-z]'))) return false;
+    
+    // Au moins un chiffre
+    if (!password.contains(RegExp(r'[0-9]'))) return false;
+    
+    // Au moins un caractère spécial
+    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) return false;
+    
+    return true;
+  }
+
+  // Générer un mot de passe fort
+  String generateStrongPassword({int length = 16}) {
+    const String upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const String lower = 'abcdefghijklmnopqrstuvwxyz';
+    const String numbers = '0123456789';
+    const String special = '!@#\$%^&*()_+{}|:<>?';
+
+    final random = Random.secure();
+    final List<String> charPool = [
+      upper[random.nextInt(upper.length)],
+      lower[random.nextInt(lower.length)],
+      numbers[random.nextInt(numbers.length)],
+      special[random.nextInt(special.length)],
+    ];
+
+    // Remplir le reste avec des caractères aléatoires
+    for (int i = charPool.length; i < length; i++) {
+      const pool = upper + lower + numbers + special;
+      charPool.add(pool[random.nextInt(pool.length)]);
+    }
+
+    // Mélanger les caractères
+    charPool.shuffle(random);
+    return charPool.join();
+  }
+}
+
+// Pour éviter les erreurs de compilation, nous ajoutons une classe User simulée
+// Dans une vraie application, cette classe serait importée depuis models/user.dart
+class User {
+  final String id;
+  final String name;
+  final String email;
+  
+  User({required this.id, required this.name, required this.email});
+  
+  factory User.fromJson(Map<String, dynamic> json) {
+    return User(
+      id: json['id'],
+      name: json['name'],
+      email: json['email'],
+    );
   }
 }
