@@ -154,32 +154,4 @@ class BiometricService {
   Future<void> invalidateSession() async {
     await _secureStorage.saveSecuritySetting('last_biometric_auth', '');
   }
-
-  // Obtenir le type biométrique principal à utiliser (pour l'UI)
-  Future<String> getPrimaryBiometricType() async {
-    try {
-      final biometrics = await getAvailableBiometrics();
-      
-      if (biometrics.isEmpty) {
-        return 'Aucun';
-      }
-      
-      if (biometrics.contains(BiometricType.face)) {
-        return 'Reconnaissance faciale';
-      } else if (biometrics.contains(BiometricType.fingerprint)) {
-        return 'Empreinte digitale';
-      } else if (biometrics.contains(BiometricType.iris)) {
-        return 'Reconnaissance de l\'iris';
-      } else {
-        return 'Autre biométrie';
-      }
-    } catch (e) {
-      return 'Non disponible';
-    }
-  }
-
-  // Obtenir l'icône correspondant au type biométrique principal
-  String getBiometricIcon() {
-    return '🔐'; // Placeholder - à remplacer par une vraie icône
-  }
 }

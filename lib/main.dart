@@ -1,4 +1,4 @@
-// main.dart
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'config/themes.dart';
@@ -10,7 +10,8 @@ import 'screens/settings_screen.dart';
 import 'screens/password_generator_screen.dart';
 import 'services/auth_service.dart';
 import 'services/sync_service.dart';
-import 'services/security_service.dart';
+import 'services/secure_storage_service.dart';
+import 'services/biometric_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,28 +23,12 @@ void main() async {
   ]);
   
   // Initialiser les services
-  final securityService = SecurityService();
-  await securityService.initialize();
-  
+  final secureStorage = SecureStorageService();
   final authService = AuthService();
-  
-  // Vérifier la sécurité de l'appareil
-  final isDeviceSecure = await authService.isDeviceSecure();
-  
-  // Vérifier si un débogueur est attaché
-  final isDebuggerAttached = securityService.isDebuggerAttached();
-  
-  // Si on est en production et que l'appareil n'est pas sécurisé
-  if (!isDebuggerAttached && !isDeviceSecure) {
-    // Dans une app réelle, vous pourriez vouloir :
-    // 1. Limiter l'accès aux données sensibles
-    // 2. Forcer une authentification supplémentaire
-    // 3. Présenter un avertissement à l'utilisateur
-    print('Appareil non sécurisé détecté (rooté)');
-  }
+  final biometricService = BiometricService();
+  final syncService = SyncService();
   
   // Initialiser le service de synchronisation
-  final syncService = SyncService();
   await syncService.initialize();
   
   runApp(const PasswordManagerApp());

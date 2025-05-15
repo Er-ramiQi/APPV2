@@ -6,7 +6,7 @@ import '../config/themes.dart';
 import '../widgets/bottom_nav_bar.dart';
 
 class PasswordGeneratorScreen extends StatefulWidget {
-  const PasswordGeneratorScreen({Key? key}) : super(key: key);
+  const PasswordGeneratorScreen({super.key});
 
   @override
   State<PasswordGeneratorScreen> createState() => _PasswordGeneratorScreenState();

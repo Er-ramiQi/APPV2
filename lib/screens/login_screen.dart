@@ -1,24 +1,23 @@
 // lib/screens/login_screen.dart
 import 'package:flutter/material.dart';
-import 'package:flutter_form_builder/flutter_form_builder.dart';
-import 'package:form_builder_validators/form_builder_validators.dart';
 import 'package:pin_code_fields/pin_code_fields.dart';
 import 'package:local_auth/local_auth.dart';
 import '../services/auth_service.dart';
 import '../services/security_service.dart';
+import '../utils/form_validator.dart';
 import '../config/themes.dart';
 import 'home_screen.dart';
 import 'register_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({Key? key}) : super(key: key);
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _formKey = GlobalKey<FormBuilderState>();
+  final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
@@ -104,7 +103,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Soumettre le formulaire de connexion
   Future<void> _submitLoginForm() async {
-    if (_formKey.currentState?.saveAndValidate() ?? false) {
+    if (_formKey.currentState?.validate() ?? false) {
       setState(() {
         _isLoading = true;
         _errorMessage = null;
@@ -246,14 +245,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: Colors.orange),
               ),
-              child: Row(
+              child: const Row(
                 children: [
-                  const Icon(Icons.warning_amber_rounded, color: Colors.orange),
-                  const SizedBox(width: 8),
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                  SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
+                      children: [
                         Text(
                           'Attention - Appareil non sécurisé',
                           style: TextStyle(
@@ -277,14 +276,12 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 40),
           
           // Formulaire
-          FormBuilder(
+          Form(
             key: _formKey,
-            autovalidateMode: AutovalidateMode.disabled,
             child: Column(
               children: [
                 // Champ email
-                FormBuilderTextField(
-                  name: 'email',
+                TextFormField(
                   controller: _emailController,
                   decoration: InputDecoration(
                     labelText: 'Email',
@@ -303,16 +300,12 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   keyboardType: TextInputType.emailAddress,
-                  validator: FormBuilderValidators.compose([
-                    FormBuilderValidators.required(errorText: 'Veuillez entrer votre email'),
-                    FormBuilderValidators.email(errorText: 'Veuillez entrer un email valide'),
-                  ]),
+                  validator: (value) => FormValidator.validateEmail(value),
                 ),
                 const SizedBox(height: 20),
                 
                 // Champ mot de passe
-                FormBuilderTextField(
-                  name: 'password',
+                TextFormField(
                   controller: _passwordController,
                   decoration: InputDecoration(
                     labelText: 'Mot de passe',
@@ -342,10 +335,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   obscureText: !_passwordVisible,
-                  validator: FormBuilderValidators.compose([
-                    FormBuilderValidators.required(errorText: 'Veuillez entrer votre mot de passe'),
-                    FormBuilderValidators.minLength(6, errorText: 'Le mot de passe doit contenir au moins 6 caractères'),
-                  ]),
+                  validator: (value) => FormValidator.validateMinLength(value, 6, 
+                      message: 'Le mot de passe doit contenir au moins 6 caractères'),
                 ),
                 const SizedBox(height: 12),
                 
@@ -440,10 +431,10 @@ class _LoginScreenState extends State<LoginScreen> {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.blue.shade100),
             ),
-            child: Column(
+            child: const Column(
               children: [
                 Row(
-                  children: const [
+                  children: [
                     Icon(Icons.security, color: AppThemes.secondaryColor),
                     SizedBox(width: 8),
                     Text(
@@ -455,8 +446,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                SizedBox(height: 8),
+                Text(
                   'Pour protéger vos données sensibles, nous utilisons une authentification à deux facteurs. Après avoir saisi vos identifiants, vous recevrez un code unique par email pour confirmer votre identité.',
                   style: TextStyle(fontSize: 12),
                 ),
@@ -594,14 +585,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     color: Colors.grey.shade50,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Row(
+                  child: const Row(
                     children: [
-                      const Icon(Icons.info_outline, color: Colors.grey),
-                      const SizedBox(width: 8),
+                      Icon(Icons.info_outline, color: Colors.grey),
+                      SizedBox(width: 8),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
+                          children: [
                             Text(
                               'Vous n\'avez pas reçu le code?',
                               style: TextStyle(fontWeight: FontWeight.bold),
@@ -657,7 +648,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
-                      side: BorderSide(color: AppThemes.secondaryColor),
+                      side: const BorderSide(color: AppThemes.secondaryColor),
                     ),
                     padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   ),

@@ -10,9 +10,9 @@ class PasswordDetailScreen extends StatefulWidget {
   final PasswordItem passwordItem;
   
   const PasswordDetailScreen({
-    Key? key, 
+    super.key, 
     required this.passwordItem,
-  }) : super(key: key);
+  });
 
   @override
   State<PasswordDetailScreen> createState() => _PasswordDetailScreenState();

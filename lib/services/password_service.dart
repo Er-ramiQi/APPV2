@@ -1,15 +1,12 @@
 // lib/services/password_service.dart
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as encrypt;
 import '../models/password_item.dart';
 import 'api_service.dart';
 import 'secure_storage_service.dart';
 import 'sync_service.dart';
-import 'threat_detection_service.dart';
 
 class PasswordService {
   // Singleton
@@ -20,7 +17,6 @@ class PasswordService {
   final ApiService _apiService = ApiService();
   final SecureStorageService _secureStorage = SecureStorageService();
   final SyncService _syncService = SyncService();
-  final ThreatDetectionService _threatDetection = ThreatDetectionService();
   
   // Évaluateur de force de mot de passe
   static const int _minPasswordLength = 8;
@@ -39,13 +35,6 @@ class PasswordService {
   // Récupérer tous les mots de passe
   Future<List<PasswordItem>> getAllPasswords() async {
     try {
-      // Vérifier le niveau de menace
-      final threatLevel = await _threatDetection.checkForThreats();
-      if (_threatDetection.isHighRisk) {
-        // Ajouter une couche de sécurité supplémentaire
-        throw SecurityException('Accès refusé en raison d\'un risque de sécurité élevé');
-      }
-      
       // Vérifier si on est en ligne
       final bool isOnline = await _isOnline();
       
@@ -75,11 +64,6 @@ class PasswordService {
       return await _secureStorage.getPasswordItems();
     } catch (e) {
       // En cas d'erreur, essayer de récupérer depuis le stockage local
-      if (e is SecurityException) {
-        // Rethrow des exceptions de sécurité
-        rethrow;
-      }
-      
       try {
         return await _secureStorage.getPasswordItems();
       } catch (localError) {
@@ -91,12 +75,6 @@ class PasswordService {
   // Récupérer un mot de passe par ID
   Future<PasswordItem?> getPasswordById(String id) async {
     try {
-      // Vérifier le niveau de menace
-      final threatLevel = await _threatDetection.checkForThreats();
-      if (_threatDetection.isHighRisk) {
-        throw SecurityException('Accès refusé en raison d\'un risque de sécurité élevé');
-      }
-      
       // Vérifier si on est en ligne
       final bool isOnline = await _isOnline();
       
@@ -122,9 +100,6 @@ class PasswordService {
         orElse: () => throw Exception('Mot de passe non trouvé'),
       );
     } catch (e) {
-      if (e is SecurityException) {
-        rethrow;
-      }
       throw Exception('Erreur lors de la récupération du mot de passe: $e');
     }
   }
@@ -132,17 +107,11 @@ class PasswordService {
   // Ajouter un nouveau mot de passe
   Future<PasswordItem> addPassword(PasswordItem password) async {
     try {
-      // Vérifier le niveau de menace
-      if (_threatDetection.isHighRisk) {
-        throw SecurityException('Opération refusée en raison d\'un risque de sécurité élevé');
-      }
-      
       // Vérifier la force du mot de passe
       final strengthScore = calculatePasswordStrength(password.password);
       
       // Avertir si le mot de passe est faible (<40)
       if (strengthScore < 40) {
-        // Dans une implémentation réelle, vous pourriez afficher un avertissement
         print('Avertissement: Mot de passe faible (score: $strengthScore)');
       }
       
@@ -206,9 +175,6 @@ class PasswordService {
       
       return tempPassword;
     } catch (e) {
-      if (e is SecurityException) {
-        rethrow;
-      }
       throw Exception('Erreur lors de l\'ajout du mot de passe: $e');
     }
   }
@@ -216,11 +182,6 @@ class PasswordService {
   // Mettre à jour un mot de passe existant
   Future<PasswordItem> updatePassword(PasswordItem password) async {
     try {
-      // Vérifier le niveau de menace
-      if (_threatDetection.isHighRisk) {
-        throw SecurityException('Opération refusée en raison d\'un risque de sécurité élevé');
-      }
-      
       // Recalculer le score de force
       final strengthScore = calculatePasswordStrength(password.password);
       
@@ -280,9 +241,6 @@ class PasswordService {
         throw Exception('Mot de passe non trouvé dans le stockage local');
       }
     } catch (e) {
-      if (e is SecurityException) {
-        rethrow;
-      }
       throw Exception('Erreur lors de la mise à jour du mot de passe: $e');
     }
   }
@@ -290,11 +248,6 @@ class PasswordService {
   // Supprimer un mot de passe
   Future<bool> deletePassword(String id) async {
     try {
-      // Vérifier le niveau de menace
-      if (_threatDetection.isHighRisk) {
-        throw SecurityException('Opération refusée en raison d\'un risque de sécurité élevé');
-      }
-      
       // Vérifier si on est en ligne
       final bool isOnline = await _isOnline();
       
@@ -338,9 +291,6 @@ class PasswordService {
       
       return true;
     } catch (e) {
-      if (e is SecurityException) {
-        rethrow;
-      }
       throw Exception('Erreur lors de la suppression du mot de passe: $e');
     }
   }
@@ -378,32 +328,6 @@ class PasswordService {
     }).toList();
   }
 
-  // Obtenir les mots de passe par niveau de sécurité
-  Future<Map<String, List<PasswordItem>>> getPasswordsByStrength() async {
-    final List<PasswordItem> allPasswords = await getAllPasswords();
-    
-    // Classer les mots de passe par niveau de sécurité
-    Map<String, List<PasswordItem>> result = {
-      'weak': [],
-      'medium': [],
-      'strong': [],
-    };
-    
-    for (var password in allPasswords) {
-      final strength = password.getPasswordStrengthCategory();
-      
-      if (strength == 'Faible') {
-        result['weak']!.add(password);
-      } else if (strength == 'Moyen') {
-        result['medium']!.add(password);
-      } else {
-        result['strong']!.add(password);
-      }
-    }
-    
-    return result;
-  }
-
   // Obtenir les statistiques des mots de passe
   Future<Map<String, dynamic>> getPasswordStatistics() async {
     final List<PasswordItem> allPasswords = await getAllPasswords();
@@ -417,11 +341,8 @@ class PasswordService {
     Map<String, int> categoryCounts = {};
     
     // Statistiques de duplication
-    int duplicateUsernames = 0;
-    int duplicatePasswords = 0;
     int reusedPasswords = 0;
     Map<String, int> passwordHashes = {}; // Pour détecter les réutilisations
-    Map<String, Set<String>> usernamesByDomain = {}; // Pour détecter les duplications d'username
     
     // Vérifier l'âge des mots de passe
     int outdatedPasswords = 0; // Mots de passe de plus de 90 jours
@@ -443,12 +364,6 @@ class PasswordService {
       if (password.website.isNotEmpty) {
         String domain = _extractDomain(password.website);
         uniqueWebsites.add(domain);
-        
-        // Compter les usernames par domaine
-        if (!usernamesByDomain.containsKey(domain)) {
-          usernamesByDomain[domain] = {};
-        }
-        usernamesByDomain[domain]!.add(password.username);
       }
       
       // Catégories
@@ -462,16 +377,6 @@ class PasswordService {
       // Âge des mots de passe
       if (password.lastModified.isBefore(threeMonthsAgo)) {
         outdatedPasswords++;
-      }
-    }
-    
-    // Compter les usernames dupliqués
-    for (var domain in usernamesByDomain.keys) {
-      for (var username in usernamesByDomain[domain]!) {
-        if (usernamesByDomain[domain]!.where((u) => u == username).length > 1) {
-          duplicateUsernames++;
-          break;
-        }
       }
     }
     
@@ -507,7 +412,6 @@ class PasswordService {
       'strong_passwords': strongPasswords,
       'unique_websites': uniqueWebsites.length,
       'category_counts': categoryCounts,
-      'duplicate_usernames': duplicateUsernames,
       'reused_passwords': reusedPasswords,
       'outdated_passwords': outdatedPasswords,
       'security_score': securityScore.round(),
@@ -578,49 +482,6 @@ class PasswordService {
     return passwordChars.join('');
   }
 
-  // Vérifier si un mot de passe a été compromis
-  Future<bool> isPasswordCompromised(String password) async {
-    try {
-      // Calculer le hash SHA-1 du mot de passe
-      final hash = _sha1Hash(password).toUpperCase();
-      
-      // Utiliser les 5 premiers caractères pour l'API
-      final prefix = hash.substring(0, 5);
-      final suffix = hash.substring(5);
-      
-      // Vérifier si on est en ligne
-      final bool isOnline = await _isOnline();
-      if (!isOnline) {
-        return false; // Impossible de vérifier sans connexion
-      }
-      
-      // Utiliser l'API Have I Been Pwned
-      final response = await _apiService.get(
-        'https://api.pwnedpasswords.com/range/$prefix',
-        // Note: Ceci suppose que votre ApiService gère les URLs absolues
-      );
-      
-      if (response.statusCode == 200) {
-        // Vérifier si notre suffixe est dans la réponse
-        final lines = const LineSplitter().convert(response.body);
-        
-        for (var line in lines) {
-          final parts = line.split(':');
-          if (parts.length >= 2 && parts[0] == suffix) {
-            // Le mot de passe a été compromis
-            return true;
-          }
-        }
-      }
-      
-      // Mot de passe non compromis
-      return false;
-    } catch (e) {
-      // En cas d'erreur, supposer que le mot de passe n'est pas compromis
-      return false;
-    }
-  }
-
   // Calculer la force d'un mot de passe (0-100)
   int calculatePasswordStrength(String password) {
     double score = 0;
@@ -677,11 +538,6 @@ class PasswordService {
       score -= 10;
     }
     
-    // Pénalité pour les mots courants
-    if (_containsCommonWord(password)) {
-      score -= 15;
-    }
-    
     // Limiter le score entre 0 et 100
     return score.round().clamp(0, 100);
   }
@@ -719,25 +575,6 @@ class PasswordService {
     return false;
   }
 
-  // Vérifier si le mot de passe contient des mots courants
-  bool _containsCommonWord(String password) {
-    final commonWords = [
-      'password', 'motdepasse', 'admin', '123456', 'welcome', 'qwerty',
-      'dragon', 'monkey', 'letmein', 'football', 'baseball', 'superman',
-      'batman', 'azerty', 'sunshine', 'princess',
-    ];
-    
-    password = password.toLowerCase();
-    
-    for (String word in commonWords) {
-      if (password.contains(word)) {
-        return true;
-      }
-    }
-    
-    return false;
-  }
-
   // Extraire le domaine d'une URL
   String _extractDomain(String url) {
     if (url.isEmpty) return '';
@@ -767,13 +604,6 @@ class PasswordService {
     return domain;
   }
 
-  // Générer un hash SHA-1 (pour l'API Have I Been Pwned)
-  String _sha1Hash(String input) {
-    final bytes = utf8.encode(input);
-    final digest = sha1.convert(bytes);
-    return digest.toString();
-  }
-
   // Hachage simple pour détecter les duplications (sans stocker le mot de passe)
   String _hashString(String input) {
     final bytes = utf8.encode(input);
@@ -789,14 +619,4 @@ class PasswordService {
       List.generate(length, (_) => chars.codeUnitAt(random.nextInt(chars.length)))
     );
   }
-}
-
-// Exception personnalisée pour les erreurs de sécurité
-class SecurityException implements Exception {
-  final String message;
-  
-  SecurityException(this.message);
-  
-  @override
-  String toString() => 'SecurityException: $message';
 }

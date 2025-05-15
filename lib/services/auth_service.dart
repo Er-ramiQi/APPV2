@@ -5,7 +5,6 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:local_auth/error_codes.dart' as auth_error;
-import 'package:root_check/root_check.dart';
 import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'secure_storage_service.dart';
@@ -24,55 +23,7 @@ class AuthService {
   static const int _maxLoginAttempts = 5;
   static const int _lockDurationMinutes = 15;
 
-  // Vérifier la sécurité de l'appareil (racine, émulateur, etc.)
-  Future<bool> isDeviceSecure() async {
-    try {
-      bool isRooted = await RootCheck.isRooted ?? false;
-      bool isDevMode = await _isInDeveloperMode();
-      
-      // Enregistrer l'état pour référence
-      await _secureStorage.saveSecuritySetting('device_rooted', isRooted.toString());
-      await _secureStorage.saveSecuritySetting('device_developer_mode', isDevMode.toString());
-      
-      // Un appareil rooté compromet gravement la sécurité
-      if (isRooted) {
-        return false;
-      }
-      
-      // Le mode développeur est un risque mais moins grave
-      return !isRooted;
-    } catch (e) {
-      // Par défaut, considérer l'appareil comme non sécurisé en cas d'erreur
-      print('Erreur lors de la vérification de la sécurité: $e');
-      return false;
-    }
-  }
-
-  // Vérifier si le mode développeur est activé
-  Future<bool> _isInDeveloperMode() async {
-    // Cette méthode est simplifiée
-    // Pour une implémentation réelle, utilisez une méthode de détection plus robuste
-    return false; // Placeholder
-  }
-
-  // Vérifier si un débogueur est attaché
-  bool isDebuggerAttached() {
-    // En mode debug pendant le développement, toujours renvoyer false
-    if (kDebugMode) return false;
-    
-    // En production, cette méthode devrait détecter si un débogueur est attaché
-    // Cette implémentation est simplifiée
-    return false; // Placeholder
-  }
-
-  // Méthode pour vérifier si l'application est en cours d'exécution sur un émulateur
-  Future<bool> isRunningOnEmulator() async {
-    // Cette méthode est simplifiée
-    // Pour une implémentation réelle, utilisez une méthode de détection d'émulateur
-    return false; // Placeholder
-  }
-
-  // Première étape de connexion : envoi email/mot de passe pour obtenir OTP
+  // Première étape de connexion : envoi email/mot de passe
   Future<bool> initiateLogin(String email, String password) async {
     try {
       // Vérifier si le compte est verrouillé
@@ -460,5 +411,13 @@ class User {
       name: json['name'],
       email: json['email'],
     );
+  }
+  
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'email': email,
+    };
   }
 }

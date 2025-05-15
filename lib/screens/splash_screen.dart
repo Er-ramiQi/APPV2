@@ -5,8 +5,7 @@ import '../config/themes.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
 import '../services/auth_service.dart';
-import '../services/security_service.dart';
-import '../services/threat_detection_service.dart';
+import '../services/biometric_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -19,15 +18,13 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   late AnimationController _animationController;
   late Animation<double> _animation;
   final AuthService _authService = AuthService();
-  final SecurityService _securityService = SecurityService();
-  final ThreatDetectionService _threatDetection = ThreatDetectionService();
+  final BiometricService _biometricService = BiometricService();
   
   // État pour indiquer si l'authentification est en cours
   bool _isAuthenticating = false;
   
   // Messages d'état
   String _statusMessage = 'Initialisation...';
-  String? _securityWarning;
 
   @override
   void initState() {
@@ -45,44 +42,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     
     _animationController.forward();
     
-    // Initialiser les services de sécurité
-    _initializeServices();
-  }
-  
-  // Initialiser les services et effectuer les vérifications de sécurité
-  Future<void> _initializeServices() async {
-    try {
-      setState(() {
-        _statusMessage = 'Vérification de la sécurité...';
-      });
-      
-      // Initialiser le service de sécurité
-      await _securityService.initialize();
-      
-      // Initialiser le service de détection des menaces
-      await _threatDetection.initialize();
-      
-      // Vérifier les menaces
-      final threatLevel = await _threatDetection.checkForThreats();
-      
-      // Si des menaces graves sont détectées, afficher un avertissement
-      if (_threatDetection.isHighRisk) {
-        setState(() {
-          _securityWarning = 'Avertissement : Problèmes de sécurité détectés sur cet appareil';
-        });
-        
-        // Attendre quelques secondes pour que l'utilisateur voie l'avertissement
-        await Future.delayed(const Duration(seconds: 3));
-      }
-      
-      // Vérifier l'authentification après un court délai
+    // Vérifier l'authentification après un court délai pour l'animation
+    Future.delayed(const Duration(seconds: 1), () {
       _checkAuth();
-    } catch (e) {
-      print('Erreur lors de l\'initialisation: $e');
-      setState(() {
-        _statusMessage = 'Erreur d\'initialisation. Veuillez redémarrer l\'application.';
-      });
-    }
+    });
   }
 
   @override
@@ -111,7 +74,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             _statusMessage = 'Authentification biométrique requise...';
           });
           
-          final authenticated = await _authService.authenticateWithBiometrics();
+          final authenticated = await _biometricService.authenticate();
           
           if (authenticated) {
             _navigateToHome();
@@ -191,16 +154,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   ],
                 ),
                 padding: const EdgeInsets.all(15),
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  errorBuilder: (context, error, stackTrace) {
-                    // Afficher une icône par défaut si l'image ne peut pas être chargée
-                    return const Icon(
-                      Icons.shield_outlined,
-                      color: AppThemes.primaryColor,
-                      size: 80,
-                    );
-                  },
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: AppThemes.primaryColor,
+                  size: 80,
                 ),
               ),
             ),
@@ -209,7 +166,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             FadeTransition(
               opacity: _animation,
               child: const Text(
-                'SecurPass',
+                'MonPass',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 32,
@@ -232,32 +189,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
               ),
             ),
             const SizedBox(height: 50),
-            // Avertissement de sécurité si nécessaire
-            if (_securityWarning != null)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade100,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.red),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.red),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _securityWarning!,
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
             // Message d'état
             Padding(
               padding: const EdgeInsets.all(16.0),
@@ -272,9 +203,10 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             ),
             const SizedBox(height: 20),
             // Indicateur de chargement
-            CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.white.withOpacity(0.8)),
-            ),
+            if (_isAuthenticating)
+              CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white.withOpacity(0.8)),
+              ),
             const SizedBox(height: 80),
             // Information sur la version
             const Padding(

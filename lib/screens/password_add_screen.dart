@@ -5,7 +5,7 @@ import '../widgets/bottom_nav_bar.dart';
 import 'password_generator_screen.dart';
 import 'dart:math';
 class PasswordAddScreen extends StatefulWidget {
-  const PasswordAddScreen({Key? key}) : super(key: key);
+  const PasswordAddScreen({super.key});
 
   @override
   State<PasswordAddScreen> createState() => _PasswordAddScreenState();

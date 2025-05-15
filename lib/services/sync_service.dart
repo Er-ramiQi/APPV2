@@ -5,7 +5,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'api_service.dart';
 import 'secure_storage_service.dart';
-import 'security_service.dart';
 import '../models/password_item.dart';
 
 class SyncService {
@@ -16,26 +15,15 @@ class SyncService {
 
   final ApiService _apiService = ApiService();
   final SecureStorageService _secureStorage = SecureStorageService();
-  final SecurityService _securityService = SecurityService();
   
   StreamSubscription<ConnectivityResult>? _connectivitySubscription;
   bool _isSyncing = false;
   
   // Constantes de configuration
   static const int _syncIntervalMinutes = 15; // Intervalle de synchronisation en minutes
-  static const int _maxSyncQueueSize = 100; // Taille maximale de la file d'attente
   
   // Initialiser le service de synchronisation
   Future<void> initialize() async {
-    // Vérifier d'abord la sécurité de l'appareil
-    final bool isDeviceSecure = await _securityService.isDeviceSecure();
-    if (!isDeviceSecure) {
-      if (kDebugMode) {
-        print('Appareil non sécurisé détecté, synchronisation désactivée');
-      }
-      return;
-    }
-    
     // Écouter les changements de connectivité
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((ConnectivityResult result) {
       // Lorsque la connexion est rétablie, tenter une synchronisation
@@ -85,41 +73,15 @@ class SyncService {
       
       // Synchroniser les données
       success = await _syncWithServer();
-      
-      // Si la synchronisation échoue, réessayer plus tard
-      if (!success) {
-        await _scheduleRetry();
-      }
-      
       return success;
     } catch (e) {
       if (kDebugMode) {
         print('Erreur de synchronisation: $e');
       }
-      await _scheduleRetry();
       return false;
     } finally {
       _isSyncing = false;
     }
-  }
-
-  // Planifier une nouvelle tentative de synchronisation
-  Future<void> _scheduleRetry() async {
-    // Récupérer le nombre d'échecs précédents
-    String? retriesStr = await _secureStorage.getSecuritySetting('sync_retries');
-    int retries = retriesStr != null ? int.parse(retriesStr) : 0;
-    
-    // Incrémenter et sauvegarder
-    retries++;
-    await _secureStorage.saveSecuritySetting('sync_retries', retries.toString());
-    
-    // Calculer le délai avec backoff exponentiel (1min, 2min, 4min, 8min...)
-    int delayMinutes = 1 << (retries - 1);
-    if (delayMinutes > 60) delayMinutes = 60; // Max 1h
-    
-    // Sauvegarder l'heure de la prochaine tentative
-    final nextRetry = DateTime.now().add(Duration(minutes: delayMinutes));
-    await _secureStorage.saveSecuritySetting('next_sync_retry', nextRetry.toIso8601String());
   }
 
   // Synchroniser avec le serveur
@@ -139,9 +101,6 @@ class SyncService {
       if (response) {
         // Synchronisation réussie, vider la file d'attente
         await _clearSyncQueue();
-        
-        // Réinitialiser le compteur de tentatives
-        await _secureStorage.saveSecuritySetting('sync_retries', '0');
         
         // Mettre à jour la dernière synchronisation réussie
         await _secureStorage.saveSecuritySetting(
@@ -166,12 +125,6 @@ class SyncService {
     try {
       // Récupérer la file d'attente existante
       final List<Map<String, dynamic>> queue = await _getSyncQueue();
-      
-      // Limiter la taille de la file
-      if (queue.length >= _maxSyncQueueSize) {
-        // Supprimer les entrées les plus anciennes
-        queue.removeRange(0, queue.length - _maxSyncQueueSize + 1);
-      }
       
       // Ajouter la nouvelle opération
       queue.add({
@@ -257,27 +210,5 @@ class SyncService {
     } catch (e) {
       return null;
     }
-  }
-
-  // Récupérer le statut de synchronisation
-  Future<Map<String, dynamic>> getSyncStatus() async {
-    final DateTime? lastSync = await getLastSyncTime();
-    final bool hasPending = await hasUnsyncedData();
-    final String? retriesStr = await _secureStorage.getSecuritySetting('sync_retries');
-    final int retries = retriesStr != null ? int.parse(retriesStr) : 0;
-    
-    return {
-      'last_sync': lastSync?.toIso8601String(),
-      'has_pending_changes': hasPending,
-      'retry_count': retries,
-      'is_syncing': _isSyncing,
-    };
-  }
-
-  // Réinitialiser l'état de synchronisation (en cas de problème)
-  Future<void> resetSyncState() async {
-    await _clearSyncQueue();
-    await _secureStorage.saveSecuritySetting('sync_retries', '0');
-    await _secureStorage.saveSecuritySetting('next_sync_retry', '');
   }
 }

@@ -8,10 +8,10 @@ class PasswordListItem extends StatelessWidget {
   final VoidCallback onTap;
 
   const PasswordListItem({
-    Key? key,
+    super.key,
     required this.passwordItem,
     required this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {
